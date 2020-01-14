@@ -32,55 +32,24 @@ impl<'sess> Channel<'sess> {
         Self { raw, sess }
     }
 
-    fn poll_setenv(
-        &mut self,
-        cx: &mut task::Context<'_>,
-        name: &str,
-        value: &str,
-    ) -> Poll<Result<()>> {
-        let channel = &mut self.raw;
-        self.sess.poll_write_with(cx, |sess| {
-            sess.rc(unsafe {
-                sys::libssh2_channel_setenv_ex(
-                    channel.as_mut(),
-                    name.as_ptr() as *const libc::c_char,
-                    name.len() as libc::c_uint,
-                    value.as_ptr() as *const libc::c_char,
-                    value.len() as libc::c_uint,
-                )
-            })
-            .map(drop)
-        })
-    }
-
     /// Set an environment variable in the remote channel's process space.
     pub async fn setenv<'a>(&'a mut self, name: &'a str, value: &'a str) -> Result<()> {
-        poll_fn(|cx| self.poll_setenv(cx, name, value)).await
-    }
-
-    fn poll_process_startup(
-        &mut self,
-        cx: &mut task::Context<'_>,
-        request: &str,
-        message: Option<&str>,
-    ) -> Poll<Result<()>> {
-        let channel = &mut self.raw;
-        let (msg, msg_len) = match message {
-            Some(msg) => (msg.as_ptr(), msg.len()),
-            None => (ptr::null(), 0),
-        };
-        self.sess.poll_write_with(cx, |sess| {
-            sess.rc(unsafe {
-                sys::libssh2_channel_process_startup(
-                    channel.as_mut(),
-                    request.as_ptr() as *const libc::c_char,
-                    request.len() as libc::c_uint,
-                    msg as *const libc::c_char,
-                    msg_len as libc::c_uint,
-                )
+        poll_fn(|cx| {
+            let channel = &mut self.raw;
+            self.sess.poll_write_with(cx, |sess| {
+                sess.rc(unsafe {
+                    sys::libssh2_channel_setenv_ex(
+                        channel.as_mut(),
+                        name.as_ptr() as *const libc::c_char,
+                        name.len() as libc::c_uint,
+                        value.as_ptr() as *const libc::c_char,
+                        value.len() as libc::c_uint,
+                    )
+                })
+                .map(drop)
             })
-            .map(drop)
         })
+        .await
     }
 
     /// Initiate a request on a session type channel.
@@ -94,7 +63,26 @@ impl<'sess> Channel<'sess> {
             request,
             message
         );
-        poll_fn(|cx| self.poll_process_startup(cx, request, message)).await
+        poll_fn(|cx| {
+            let channel = &mut self.raw;
+            let (msg, msg_len) = match message {
+                Some(msg) => (msg.as_ptr(), msg.len()),
+                None => (ptr::null(), 0),
+            };
+            self.sess.poll_write_with(cx, |sess| {
+                sess.rc(unsafe {
+                    sys::libssh2_channel_process_startup(
+                        channel.as_mut(),
+                        request.as_ptr() as *const libc::c_char,
+                        request.len() as libc::c_uint,
+                        msg as *const libc::c_char,
+                        msg_len as libc::c_uint,
+                    )
+                })
+                .map(drop)
+            })
+        })
+        .await
     }
 
     /// Start a shell.

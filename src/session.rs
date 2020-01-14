@@ -161,65 +161,22 @@ impl Session {
         Ok(())
     }
 
-    fn poll_authenticate<A: ?Sized>(
-        &mut self,
-        cx: &mut task::Context<'_>,
-        username: &str,
-        auth: &mut A,
-    ) -> Poll<Result<()>>
-    where
-        A: Authenticator + Unpin,
-    {
-        Pin::new(&mut *auth).poll_authenticate(
-            cx,
-            &mut AuthContext {
-                sess: self,
-                username: &*username,
-            },
-        )
-    }
-
     pub async fn authenticate<'a, A>(&'a mut self, username: &'a str, auth: A) -> Result<()>
     where
         A: Authenticator + Unpin,
     {
         tracing::trace!("Session::authenticate");
         let mut auth = auth;
-        poll_fn(|cx| self.poll_authenticate(cx, username, &mut auth)).await
-    }
-
-    fn poll_open_channel(
-        &mut self,
-        cx: &mut task::Context<'_>,
-        channel_type: &str,
-        window_size: Option<u32>,
-        packet_size: Option<u32>,
-        msg: Option<&str>,
-    ) -> Poll<Result<NonNull<sys::LIBSSH2_CHANNEL>>> {
-        self.poll_write_with(cx, |sess| {
-            let window_size = window_size.unwrap_or(sys::LIBSSH2_CHANNEL_WINDOW_DEFAULT);
-            let packet_size = packet_size.unwrap_or(sys::LIBSSH2_CHANNEL_PACKET_DEFAULT);
-            let (msg, msg_len) = match msg {
-                Some(msg) => (
-                    msg.as_ptr() as *const libc::c_char,
-                    msg.len() as libc::c_uint,
-                ),
-                None => (ptr::null(), 0),
-            };
-
-            let raw = NonNull::new(unsafe {
-                sys::libssh2_channel_open_ex(
-                    sess.raw.as_mut(),
-                    channel_type.as_ptr() as *const libc::c_char,
-                    channel_type.len() as libc::c_uint,
-                    window_size,
-                    packet_size,
-                    msg,
-                    msg_len,
-                )
-            });
-            raw.ok_or_else(|| sess.last_error())
+        poll_fn(|cx| {
+            Pin::new(&mut auth).poll_authenticate(
+                cx,
+                &mut AuthContext {
+                    sess: self,
+                    username: &*username,
+                },
+            )
         })
+        .await
     }
 
     pub async fn open_channel<'a>(
@@ -230,9 +187,35 @@ impl Session {
         msg: Option<&'a str>,
     ) -> Result<Channel<'a>> {
         tracing::trace!("Session::open_channel(type={:?})", channel_type);
-        let raw =
-            poll_fn(|cx| self.poll_open_channel(cx, channel_type, window_size, packet_size, msg))
-                .await?;
+
+        let raw = poll_fn(|cx| {
+            self.poll_write_with(cx, |sess| {
+                let window_size = window_size.unwrap_or(sys::LIBSSH2_CHANNEL_WINDOW_DEFAULT);
+                let packet_size = packet_size.unwrap_or(sys::LIBSSH2_CHANNEL_PACKET_DEFAULT);
+                let (msg, msg_len) = match msg {
+                    Some(msg) => (
+                        msg.as_ptr() as *const libc::c_char,
+                        msg.len() as libc::c_uint,
+                    ),
+                    None => (ptr::null(), 0),
+                };
+
+                let raw = NonNull::new(unsafe {
+                    sys::libssh2_channel_open_ex(
+                        sess.raw.as_mut(),
+                        channel_type.as_ptr() as *const libc::c_char,
+                        channel_type.len() as libc::c_uint,
+                        window_size,
+                        packet_size,
+                        msg,
+                        msg_len,
+                    )
+                });
+                raw.ok_or_else(|| sess.last_error())
+            })
+        })
+        .await?;
+
         Ok(Channel::new(raw, self))
     }
 
@@ -241,20 +224,16 @@ impl Session {
         self.open_channel("session", None, None, None).await
     }
 
-    fn poll_sftp(
-        &mut self,
-        cx: &mut task::Context<'_>,
-    ) -> Poll<Result<NonNull<sys::LIBSSH2_SFTP>>> {
-        self.poll_write_with(cx, |sess| {
-            NonNull::new(unsafe { sys::libssh2_sftp_init(sess.raw.as_mut()) }) //
-                .ok_or_else(|| sess.last_error())
-        })
-    }
-
     #[allow(clippy::needless_lifetimes)]
     pub async fn sftp<'sess>(&'sess mut self) -> Result<Sftp<'sess>> {
         tracing::trace!("Session::sftp");
-        let raw = poll_fn(|cx| self.poll_sftp(cx)).await?;
+        let raw = poll_fn(|cx| {
+            self.poll_write_with(cx, |sess| {
+                NonNull::new(unsafe { sys::libssh2_sftp_init(sess.raw.as_mut()) }) //
+                    .ok_or_else(|| sess.last_error())
+            })
+        })
+        .await?;
         Ok(Sftp::new(raw, self))
     }
 }
