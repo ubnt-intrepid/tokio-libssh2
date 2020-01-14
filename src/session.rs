@@ -19,10 +19,6 @@ use std::{
 };
 use tokio::io::PollEvented;
 
-extern "C" {
-    fn libssh2_session_last_errno(sess: *mut sys::LIBSSH2_SESSION) -> libc::c_int;
-}
-
 pub struct Session {
     raw: NonNull<sys::LIBSSH2_SESSION>,
     stream: Option<PollEvented<TcpStream>>,
@@ -62,22 +58,30 @@ impl Session {
         self.raw.as_mut()
     }
 
-    pub(crate) unsafe fn last_errno(&mut self) -> libc::c_int {
-        libssh2_session_last_errno(self.raw.as_mut())
+    pub(crate) fn last_error(&mut self) -> Ssh2Error {
+        unsafe { Ssh2Error::last_error(self.raw.as_mut()) } //
+            .unwrap_or_else(Ssh2Error::unknown)
+    }
+
+    pub(crate) fn rc<R: ReturnCode>(&mut self, rc: R) -> std::result::Result<R, Ssh2Error> {
+        if rc.is_success() {
+            Ok(rc)
+        } else {
+            Err(self.last_error())
+        }
     }
 
     fn stream_mut(&mut self) -> &mut PollEvented<TcpStream> {
         self.stream.as_mut().unwrap()
     }
 
-    pub(crate) fn poll_read_with<F, R, E>(
+    pub(crate) fn poll_read_with<F, R>(
         &mut self,
         cx: &mut task::Context<'_>,
         f: F,
     ) -> Poll<Result<R>>
     where
-        F: FnOnce(&mut Self) -> Option<std::result::Result<R, E>>,
-        E: Into<crate::Error>,
+        F: FnOnce(&mut Self) -> std::result::Result<R, Ssh2Error>,
     {
         use mio::unix::UnixReady;
         use mio::Ready;
@@ -88,31 +92,32 @@ impl Session {
         ready!(self.stream_mut().poll_read_ready(cx, mask))?;
 
         match f(&mut *self) {
-            Some(res) => Poll::Ready(res.map_err(Into::into)),
-            None => {
+            Ok(ret) => Poll::Ready(Ok(ret)),
+            Err(ref err) if err.code() == sys::LIBSSH2_ERROR_EAGAIN => {
                 self.stream_mut().clear_read_ready(cx, mask)?;
                 Poll::Pending
             }
+            Err(err) => Poll::Ready(Err(err.into())),
         }
     }
 
-    pub(crate) fn poll_write_with<F, R, E>(
+    pub(crate) fn poll_write_with<F, R>(
         &mut self,
         cx: &mut task::Context<'_>,
         f: F,
     ) -> Poll<Result<R>>
     where
-        F: FnOnce(&mut Self) -> Option<std::result::Result<R, E>>,
-        E: Into<crate::Error>,
+        F: FnOnce(&mut Self) -> std::result::Result<R, Ssh2Error>,
     {
         ready!(self.stream_mut().poll_write_ready(cx))?;
 
         match f(&mut *self) {
-            Some(res) => Poll::Ready(res.map_err(Into::into)),
-            None => {
+            Ok(ret) => Poll::Ready(Ok(ret)),
+            Err(ref err) if err.code() == sys::LIBSSH2_ERROR_EAGAIN => {
                 self.stream_mut().clear_write_ready(cx)?;
                 Poll::Pending
             }
+            Err(err) => Poll::Ready(Err(err.into())),
         }
     }
 
@@ -191,7 +196,7 @@ impl Session {
         packet_size: Option<u32>,
         msg: Option<&str>,
     ) -> Poll<Result<NonNull<sys::LIBSSH2_CHANNEL>>> {
-        self.poll_write_with(cx, |sess| -> Option<Result<_>> {
+        self.poll_write_with(cx, |sess| {
             let window_size = window_size.unwrap_or(sys::LIBSSH2_CHANNEL_WINDOW_DEFAULT);
             let packet_size = packet_size.unwrap_or(sys::LIBSSH2_CHANNEL_PACKET_DEFAULT);
             let (msg, msg_len) = match msg {
@@ -202,8 +207,8 @@ impl Session {
                 None => (ptr::null(), 0),
             };
 
-            unsafe {
-                let raw = NonNull::new(sys::libssh2_channel_open_ex(
+            let raw = NonNull::new(unsafe {
+                sys::libssh2_channel_open_ex(
                     sess.raw.as_mut(),
                     channel_type.as_ptr() as *const libc::c_char,
                     channel_type.len() as libc::c_uint,
@@ -211,16 +216,9 @@ impl Session {
                     packet_size,
                     msg,
                     msg_len,
-                ));
-
-                match raw {
-                    Some(raw) => Some(Ok(raw)),
-                    None => match sess.last_errno() {
-                        sys::LIBSSH2_ERROR_EAGAIN => None,
-                        code => Some(Err(Ssh2Error::from_code(code).into())),
-                    },
-                }
-            }
+                )
+            });
+            raw.ok_or_else(|| sess.last_error())
         })
     }
 
@@ -247,18 +245,9 @@ impl Session {
         &mut self,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<NonNull<sys::LIBSSH2_SFTP>>> {
-        self.poll_write_with(cx, |sess| -> Option<Result<_>> {
-            unsafe {
-                let raw = NonNull::new(sys::libssh2_sftp_init(sess.raw.as_mut()));
-
-                match raw {
-                    Some(raw) => Some(Ok(raw)),
-                    None => match sess.last_errno() {
-                        sys::LIBSSH2_ERROR_EAGAIN => None,
-                        code => Some(Err(Ssh2Error::from_code(code).into())),
-                    },
-                }
-            }
+        self.poll_write_with(cx, |sess| {
+            NonNull::new(unsafe { sys::libssh2_sftp_init(sess.raw.as_mut()) }) //
+                .ok_or_else(|| sess.last_error())
         })
     }
 
@@ -267,5 +256,21 @@ impl Session {
         tracing::trace!("Session::sftp");
         let raw = poll_fn(|cx| self.poll_sftp(cx)).await?;
         Ok(Sftp::new(raw, self))
+    }
+}
+
+pub(crate) trait ReturnCode {
+    fn is_success(&self) -> bool;
+}
+
+impl ReturnCode for libc::c_int {
+    fn is_success(&self) -> bool {
+        *self >= 0
+    }
+}
+
+impl ReturnCode for libc::ssize_t {
+    fn is_success(&self) -> bool {
+        *self >= 0
     }
 }

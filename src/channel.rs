@@ -1,7 +1,4 @@
-use crate::{
-    error::{Result, Ssh2Error},
-    session::Session,
-};
+use crate::{error::Result, session::Session};
 use futures::{
     future::poll_fn,
     task::{self, Poll},
@@ -41,25 +38,19 @@ impl<'sess> Channel<'sess> {
         name: &str,
         value: &str,
     ) -> Poll<Result<()>> {
-        unsafe {
-            let raw = self.raw.as_mut();
-            self.sess.poll_write_with(cx, |sess| -> Option<Result<_>> {
-                let rc = sys::libssh2_channel_setenv_ex(
-                    raw,
+        let channel = &mut self.raw;
+        self.sess.poll_write_with(cx, |sess| {
+            sess.rc(unsafe {
+                sys::libssh2_channel_setenv_ex(
+                    channel.as_mut(),
                     name.as_ptr() as *const libc::c_char,
                     name.len() as libc::c_uint,
                     value.as_ptr() as *const libc::c_char,
                     value.len() as libc::c_uint,
-                );
-                match rc {
-                    0 => Some(Ok(())),
-                    sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                        .unwrap_or_else(Ssh2Error::unknown)
-                        .into())),
-                }
+                )
             })
-        }
+            .map(drop)
+        })
     }
 
     /// Set an environment variable in the remote channel's process space.
@@ -73,29 +64,23 @@ impl<'sess> Channel<'sess> {
         request: &str,
         message: Option<&str>,
     ) -> Poll<Result<()>> {
-        unsafe {
-            let raw = self.raw.as_mut();
-            self.sess.poll_write_with(cx, |sess| -> Option<Result<_>> {
-                let (msg, msg_len) = match message {
-                    Some(msg) => (msg.as_ptr(), msg.len()),
-                    None => (ptr::null(), 0),
-                };
-                let rc = sys::libssh2_channel_process_startup(
-                    raw,
+        let channel = &mut self.raw;
+        let (msg, msg_len) = match message {
+            Some(msg) => (msg.as_ptr(), msg.len()),
+            None => (ptr::null(), 0),
+        };
+        self.sess.poll_write_with(cx, |sess| {
+            sess.rc(unsafe {
+                sys::libssh2_channel_process_startup(
+                    channel.as_mut(),
                     request.as_ptr() as *const libc::c_char,
                     request.len() as libc::c_uint,
                     msg as *const libc::c_char,
                     msg_len as libc::c_uint,
-                );
-                match rc {
-                    0 => Some(Ok(())),
-                    sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                        .unwrap_or_else(Ssh2Error::unknown)
-                        .into())),
-                }
+                )
             })
-        }
+            .map(drop)
+        })
     }
 
     /// Initiate a request on a session type channel.
@@ -145,25 +130,18 @@ impl<'sess> Channel<'sess> {
         stream_id: i32,
         dst: &mut [u8],
     ) -> Poll<Result<usize>> {
-        unsafe {
-            let raw = self.raw.as_mut();
-            self.sess.poll_read_with(cx, |sess| {
-                let rc = sys::libssh2_channel_read_ex(
-                    raw,
+        let channel = &mut self.raw;
+        self.sess.poll_read_with(cx, |sess| {
+            sess.rc(unsafe {
+                sys::libssh2_channel_read_ex(
+                    channel.as_mut(),
                     stream_id as libc::c_int,
                     dst.as_mut_ptr() as *mut libc::c_char,
                     dst.len() as libc::size_t,
-                );
-                match rc {
-                    n if n >= 0 => Some(Ok(n as usize)),
-                    n if n as libc::c_int == sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => {
-                        Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                            .unwrap_or_else(Ssh2Error::unknown)))
-                    }
-                }
+                )
             })
-        }
+            .map(|n| n as usize)
+        })
     }
 
     fn poll_write(
@@ -172,59 +150,34 @@ impl<'sess> Channel<'sess> {
         stream_id: i32,
         src: &[u8],
     ) -> Poll<Result<usize>> {
-        unsafe {
-            let raw = self.raw.as_mut();
-            self.sess.poll_write_with(cx, |sess| {
-                let rc = sys::libssh2_channel_write_ex(
-                    raw,
+        let channel = &mut self.raw;
+        self.sess.poll_write_with(cx, |sess| {
+            sess.rc(unsafe {
+                sys::libssh2_channel_write_ex(
+                    channel.as_mut(),
                     stream_id,
                     src.as_ptr() as *const libc::c_char,
                     src.len(),
-                );
-                match rc {
-                    n if n >= 0 => Some(Ok(n as usize)),
-                    n if n as libc::c_int == sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => {
-                        Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                            .unwrap_or_else(Ssh2Error::unknown)))
-                    }
-                }
+                )
             })
-        }
+            .map(|n| n as usize)
+        })
     }
 
     fn poll_flush(&mut self, cx: &mut task::Context<'_>, stream_id: i32) -> Poll<Result<()>> {
-        unsafe {
-            let raw = self.raw.as_mut();
-            self.sess.poll_write_with(cx, |sess| {
-                let rc = sys::libssh2_channel_flush_ex(raw, stream_id);
-                match rc {
-                    0 => Some(Ok(())),
-                    sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => {
-                        Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                            .unwrap_or_else(Ssh2Error::unknown)))
-                    }
-                }
-            })
-        }
+        let channel = &mut self.raw;
+        self.sess.poll_write_with(cx, |sess| {
+            sess.rc(unsafe { sys::libssh2_channel_flush_ex(channel.as_mut(), stream_id) })
+                .map(drop)
+        })
     }
 
     fn poll_close(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<()>> {
-        unsafe {
-            let raw = self.raw.as_mut();
-            self.sess.poll_write_with(cx, |sess| {
-                let rc = sys::libssh2_channel_close(raw);
-                match rc {
-                    0 => Some(Ok(())),
-                    sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => {
-                        Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                            .unwrap_or_else(Ssh2Error::unknown)))
-                    }
-                }
-            })
-        }
+        let channel = &mut self.raw;
+        self.sess.poll_write_with(cx, |sess| {
+            sess.rc(unsafe { sys::libssh2_channel_close(channel.as_mut()) })
+                .map(drop)
+        })
     }
 
     pub async fn close(&mut self) -> Result<()> {

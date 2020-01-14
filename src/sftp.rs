@@ -202,11 +202,10 @@ impl<'sess> Sftp<'sess> {
                 );
 
                 match rc {
-                    0 => Some(Ok(())),
-                    sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => Some(Err(Ssh2Error::from_code(
-                        sys::libssh2_sftp_last_error(sftp) as libc::c_int,
-                    ))),
+                    0 => Ok(()),
+                    _ => Err(Ssh2Error::from_code(
+                        sys::libssh2_sftp_last_error(sftp) as libc::c_int
+                    )),
                 }
             })
         }
@@ -270,32 +269,23 @@ impl<'sess> Sftp<'sess> {
         options: &OpenOptions,
         open_type: libc::c_int,
     ) -> Poll<Result<NonNull<sys::LIBSSH2_SFTP_HANDLE>>> {
-        unsafe {
-            let sftp = self.raw.as_mut();
-            let path = path.as_os_str().as_bytes();
-            let flags = options.flags;
-            let mode = options.mode;
-            self.sess.poll_write_with(cx, |sess| {
-                let raw = NonNull::new(sys::libssh2_sftp_open_ex(
-                    sftp,
+        let sftp = &mut self.raw;
+        let path = path.as_os_str().as_bytes();
+        let flags = options.flags;
+        let mode = options.mode;
+        self.sess.poll_write_with(cx, |sess| {
+            let raw = NonNull::new(unsafe {
+                sys::libssh2_sftp_open_ex(
+                    sftp.as_mut(),
                     path.as_ptr() as *const libc::c_char,
                     path.as_ref().len() as libc::c_uint,
                     flags,
                     mode,
                     open_type,
-                ));
-
-                match raw {
-                    Some(raw) => Some(Ok(raw)),
-                    None => match sess.last_errno() {
-                        sys::LIBSSH2_ERROR_EAGAIN => None,
-                        _ => Some(Err(Ssh2Error::from_code(
-                            sys::libssh2_sftp_last_error(sftp) as libc::c_int,
-                        ))),
-                    },
-                }
-            })
-        }
+                )
+            });
+            raw.ok_or_else(|| sess.last_error())
+        })
     }
 
     pub async fn open<'a>(&'a mut self, path: impl AsRef<Path>) -> Result<File<'a, 'sess>> {
@@ -336,80 +326,54 @@ impl Handle<'_, '_> {
         attrs: *mut sys::LIBSSH2_SFTP_ATTRIBUTES,
         setstat: bool,
     ) -> Poll<Result<()>> {
-        unsafe {
-            let handle = self.raw.as_mut();
-            let sftp = self.sftp.raw.as_mut();
-            let setstat = if setstat { 1 } else { 0 };
-            self.sftp.sess.poll_write_with(cx, |_| {
-                let rc = sys::libssh2_sftp_fstat_ex(handle, attrs, setstat);
-                match rc {
-                    0 => Some(Ok(())),
-                    sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => Some(Err(Ssh2Error::from_code(
-                        sys::libssh2_sftp_last_error(sftp) as libc::c_int,
-                    ))),
-                }
-            })
-        }
+        let handle = &mut self.raw;
+        let sftp = &mut self.sftp.raw;
+        let setstat = if setstat { 1 } else { 0 };
+        self.sftp.sess.poll_write_with(cx, |_| {
+            let rc = unsafe { sys::libssh2_sftp_fstat_ex(handle.as_mut(), attrs, setstat) };
+            match rc {
+                0 => Ok(()),
+                _ => Err(Ssh2Error::from_code(unsafe {
+                    sys::libssh2_sftp_last_error(sftp.as_mut()) as libc::c_int
+                })),
+            }
+        })
     }
 
     fn poll_read(&mut self, cx: &mut task::Context<'_>, dst: &mut [u8]) -> Poll<Result<usize>> {
-        unsafe {
-            let handle = self.raw.as_mut();
-            self.sftp.sess.poll_read_with(cx, |sess| {
-                let rc = sys::libssh2_sftp_read(
-                    handle,
+        let handle = &mut self.raw;
+        self.sftp.sess.poll_read_with(cx, |sess| {
+            sess.rc(unsafe {
+                sys::libssh2_sftp_read(
+                    handle.as_mut(),
                     dst.as_mut_ptr() as *mut libc::c_char,
                     dst.len() as libc::size_t,
-                );
-                match rc {
-                    n if n >= 0 => Some(Ok(n as usize)),
-                    rc if rc as libc::c_int == sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => {
-                        Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                            .unwrap_or_else(Ssh2Error::unknown)))
-                    }
-                }
+                )
             })
-        }
+            .map(|n| n as usize)
+        })
     }
 
     fn poll_write(&mut self, cx: &mut task::Context<'_>, src: &[u8]) -> Poll<Result<usize>> {
-        unsafe {
-            let handle = self.raw.as_mut();
-            self.sftp.sess.poll_read_with(cx, |sess| {
-                let rc = sys::libssh2_sftp_write(
-                    handle,
+        let handle = &mut self.raw;
+        self.sftp.sess.poll_read_with(cx, |sess| {
+            sess.rc(unsafe {
+                sys::libssh2_sftp_write(
+                    handle.as_mut(),
                     src.as_ptr() as *const libc::c_char,
                     src.len() as libc::size_t,
-                );
-                match rc {
-                    n if n >= 0 => Some(Ok(n as usize)),
-                    rc if rc as libc::c_int == sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => {
-                        Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                            .unwrap_or_else(Ssh2Error::unknown)))
-                    }
-                }
+                )
             })
-        }
+            .map(|n| n as usize)
+        })
     }
 
     fn poll_fsync(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<()>> {
-        unsafe {
-            let handle = self.raw.as_mut();
-            self.sftp.sess.poll_read_with(cx, |sess| {
-                let rc = sys::libssh2_sftp_fsync(handle);
-                match rc {
-                    0 => Some(Ok(())),
-                    sys::LIBSSH2_ERROR_EAGAIN => None,
-                    _ => {
-                        Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                            .unwrap_or_else(Ssh2Error::unknown)))
-                    }
-                }
-            })
-        }
+        let handle = &mut self.raw;
+        self.sftp.sess.poll_read_with(cx, |sess| {
+            sess.rc(unsafe { sys::libssh2_sftp_fsync(handle.as_mut()) })
+                .map(drop)
+        })
     }
 
     fn poll_readdir(
@@ -417,37 +381,31 @@ impl Handle<'_, '_> {
         cx: &mut task::Context<'_>,
         pathbuf: &mut Vec<u8>,
         attr: *mut sys::LIBSSH2_SFTP_ATTRIBUTES,
-    ) -> Poll<Result<bool>> {
+    ) -> Poll<Result<()>> {
         unsafe {
             pathbuf.set_len(pathbuf.capacity());
+        }
 
-            let handle = self.raw.as_mut();
-            self.sftp.sess.poll_read_with(cx, |sess| {
-                let rc = sys::libssh2_sftp_readdir_ex(
-                    handle,
+        let handle = &mut self.raw;
+        self.sftp.sess.poll_read_with(cx, |sess| {
+            let res = sess.rc(unsafe {
+                sys::libssh2_sftp_readdir_ex(
+                    handle.as_mut(),
                     pathbuf.as_mut_ptr() as *mut libc::c_char,
                     pathbuf.len() as libc::size_t,
                     ptr::null_mut(),
                     0,
                     attr,
-                );
-                match rc {
-                    n if n >= 0 => {
-                        pathbuf.set_len(n as usize);
-                        Some(Ok(n == 0))
-                    }
-                    sys::LIBSSH2_ERROR_EAGAIN => {
-                        pathbuf.set_len(0);
-                        None
-                    }
-                    _ => {
-                        pathbuf.set_len(0);
-                        Some(Err(Ssh2Error::last_error(sess.as_raw_ptr())
-                            .unwrap_or_else(Ssh2Error::unknown)))
-                    }
-                }
-            })
-        }
+                )
+            });
+            unsafe {
+                pathbuf.set_len(match res {
+                    Ok(n) => n as usize,
+                    Err(..) => 0,
+                });
+            }
+            res.map(drop)
+        })
     }
 }
 
@@ -551,7 +509,7 @@ impl Dir<'_, '_> {
     async fn readdir_inner(&mut self) -> Result<Option<DirEntry>> {
         let mut path = Vec::with_capacity(1024);
         let mut attr = mem::MaybeUninit::zeroed();
-        let terminated = poll_fn(|cx| {
+        poll_fn(|cx| {
             self.0.poll_readdir(
                 cx, //
                 &mut path,
@@ -560,7 +518,7 @@ impl Dir<'_, '_> {
         })
         .await?;
 
-        if terminated {
+        if path.is_empty() {
             return Ok(None);
         };
 
