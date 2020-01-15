@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["Dir","A directory handle corresponding to an SFTP connection."],["DirEntry",""],["File","A file handle corresponding to an SFTP connection."],["FileAttr","The metadata about a remote file."],["OpenOptions",""],["Sftp","A handle to a remote filesystem over SFTP."]]});

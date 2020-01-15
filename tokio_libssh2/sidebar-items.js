@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["auth","Authentication of a session."],["sftp","SFTP subsystem."]],"struct":[["Channel","A portion of an SSH connection on which data can be read and written."],["Error",""],["Session","A handle to an SSH session."],["Stream","The stream associated with a `Channel`."]],"type":[["Result",""]]});

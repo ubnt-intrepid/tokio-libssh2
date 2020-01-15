@@ -1,0 +1,9 @@
+(function() {var implementors = {};
+implementors["tokio_libssh2"] = [{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html\" title=\"trait core::fmt::Debug\">Debug</a> for <a class=\"struct\" href=\"tokio_libssh2/struct.Error.html\" title=\"struct tokio_libssh2::Error\">Error</a>","synthetic":false,"types":["tokio_libssh2::error::Error"]},{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html\" title=\"trait core::fmt::Debug\">Debug</a> for <a class=\"struct\" href=\"tokio_libssh2/sftp/struct.FileAttr.html\" title=\"struct tokio_libssh2::sftp::FileAttr\">FileAttr</a>","synthetic":false,"types":["tokio_libssh2::sftp::FileAttr"]},{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html\" title=\"trait core::fmt::Debug\">Debug</a> for <a class=\"struct\" href=\"tokio_libssh2/sftp/struct.DirEntry.html\" title=\"struct tokio_libssh2::sftp::DirEntry\">DirEntry</a>","synthetic":false,"types":["tokio_libssh2::sftp::DirEntry"]},{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html\" title=\"trait core::fmt::Debug\">Debug</a> for <a class=\"struct\" href=\"tokio_libssh2/sftp/struct.OpenOptions.html\" title=\"struct tokio_libssh2::sftp::OpenOptions\">OpenOptions</a>","synthetic":false,"types":["tokio_libssh2::sftp::OpenOptions"]}];
+
+            if (window.register_implementors) {
+                window.register_implementors(implementors);
+            } else {
+                window.pending_implementors = implementors;
+            }
+        })()
