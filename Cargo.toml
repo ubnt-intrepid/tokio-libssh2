@@ -2,7 +2,9 @@
 name = "tokio-libssh2"
 version = "0.0.1"
 publish = false
-description = "A libssh2 bindings with interoperability with tokio."
+description = """
+A libssh2 Rust bindings focusd on interoperability with Tokio.
+"""
 authors = ["Yusuke Sasaki <yusuke.sasaki.nuem@gmail.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
