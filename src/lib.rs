@@ -5,6 +5,7 @@ mod channel;
 mod error;
 mod session;
 pub mod sftp;
+mod util;
 
 pub use crate::{
     channel::{Channel, Stream},

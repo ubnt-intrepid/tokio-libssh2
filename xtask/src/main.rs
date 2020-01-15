@@ -1,14 +1,8 @@
-use std::{
-    ffi::OsString,
-    path::{Path, PathBuf},
-};
+use std::{ffi::OsString, path::PathBuf};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 enum Arg {
-    /// Install Git hooks
-    InstallHooks,
-
     /// Run a script.
     Script {
         /// The script name
@@ -23,40 +17,8 @@ enum Arg {
 
 fn main() -> anyhow::Result<()> {
     match Arg::from_args() {
-        Arg::InstallHooks => do_install_hooks(),
         Arg::Script { command, args } => do_script(command, args),
     }
-}
-
-fn do_install_hooks() -> anyhow::Result<()> {
-    let src_dir = project_root()?.join(".cargo/hooks").canonicalize()?;
-    anyhow::ensure!(src_dir.is_dir(), "Cargo hooks directory");
-
-    let dst_dir = project_root()?.join(".git/hooks").canonicalize()?;
-    anyhow::ensure!(dst_dir.is_dir(), "Git hooks directory");
-
-    install_hook(src_dir.join("pre-commit"), dst_dir.join("pre-commit"))?;
-    install_hook(src_dir.join("pre-push"), dst_dir.join("pre-push"))?;
-
-    Ok(())
-}
-
-fn install_hook(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<()> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
-
-    if src.is_file() {
-        println!("install {:?} to {:?}", src, dst);
-
-        std::fs::create_dir_all(
-            dst.parent()
-                .ok_or_else(|| anyhow::anyhow!("missing dst parent"))?,
-        )?;
-        std::fs::remove_file(dst)?;
-        std::os::unix::fs::symlink(src, dst)?;
-    }
-
-    Ok(())
 }
 
 fn do_script(command: OsString, args: Vec<OsString>) -> anyhow::Result<()> {

@@ -1,4 +1,4 @@
-name: Linux
+name: Workflow
 
 on:
   push:
@@ -11,27 +11,62 @@ env:
 
 jobs:
   Test:
-    runs-on: ubuntu-18.04
     strategy:
       matrix:
-        rust_toolchain: [stable, beta, nightly]
+        conf:
+          - { toolchain: stable  , os: ubuntu-18.04   }
+          - { toolchain: beta    , os: ubuntu-18.04   }
+          - { toolchain: nightly , os: ubuntu-18.04   }
+          - { toolchain: stable  , os: macos-latest   }
+        # - { toolchain: stable  , os: windows-latest , only_build: true }
+
+    runs-on: ${{ matrix.conf.os }}
     steps:
     - uses: actions/checkout@v1
-      with:
-        submodules: true
-
     - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
       with:
         profile: minimal
-        toolchain: ${{ matrix.rust_toolchain }}
+        toolchain: ${{ matrix.conf.toolchain }}
         override: true
+
+    - name: Build
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --all-targets
+      if: matrix.conf.only_build == true
 
     - name: Run tests
       uses: actions-rs/cargo@v1
       with:
-        command: test
-        args: --workspace
+        command: xscript
+        args: test
+      if: matrix.conf.only_build != true
+  
+  Lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        components: clippy, rustfmt
+        override: true
+
+    - name: Format check
+      uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: --all -- --check
+
+    - name: Run clippy
+      uses: actions-rs/cargo@v1
+      with:
+        command: clippy
+        args: --workspace --all-targets
 
   DeployMasterDoc:
     runs-on: ubuntu-18.04
@@ -56,10 +91,8 @@ jobs:
     - name: Build API docs
       uses: actions-rs/cargo@v1
       with:
-        command: doc
-        args: --no-deps
-
-    - run: rm -fv target/doc/.lock
+        command: xscript
+        args: doc
 
     - name: Upload artifact
       uses: actions/upload-artifact@master
