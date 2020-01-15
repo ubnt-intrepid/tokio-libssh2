@@ -13,7 +13,6 @@ use libssh2_sys as sys;
 use mio::net::TcpStream;
 use std::{
     ffi::{CStr, CString},
-    os::unix::prelude::*,
     pin::Pin,
     ptr::{self, NonNull},
 };
@@ -148,12 +147,26 @@ impl Session {
 
     /// Start the transport layer protocol negotiation with the connected host.
     pub async fn handshake(&mut self, stream: std::net::TcpStream) -> Result<()> {
+        #[cfg(unix)]
+        fn get_socket_fd(stream: &std::net::TcpStream) -> std::os::unix::io::RawFd {
+            use std::os::unix::prelude::*;
+            stream.as_raw_fd()
+        }
+
+        #[cfg(windows)]
+        fn get_socket_fd(stream: &std::net::TcpStream) -> std::os::windows::io::RawSocket {
+            use sts::os::windows::prelude::*;
+            stream.as_raw_socket()
+        }
+
+        let fd = get_socket_fd(&stream);
+
         let stream = PollEvented::new(TcpStream::from_stream(stream)?)?;
         self.stream.replace(stream);
+
         poll_fn(|cx| {
             let raw = self.raw.as_ptr();
             self.poll_with(cx, |sess| {
-                let fd = sess.stream.as_ref().unwrap().get_ref().as_raw_fd();
                 sess.rc(unsafe { sys::libssh2_session_handshake(raw, fd) })
                     .map(drop)
             })

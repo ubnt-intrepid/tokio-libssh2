@@ -3,6 +3,7 @@
 use crate::{
     error::{Result, Ssh2Error},
     session::Session,
+    util::{bytes_to_path, path_to_bytes},
 };
 use futures::{
     future::poll_fn,
@@ -10,11 +11,9 @@ use futures::{
 };
 use libssh2_sys as sys;
 use std::{
-    ffi::OsStr, //
-    fmt,
+    fmt, //
     io,
     mem,
-    os::unix::prelude::*,
     path::{Path, PathBuf},
     pin::Pin,
     ptr::{self, NonNull},
@@ -155,8 +154,16 @@ impl OpenOptions {
     where
         P: AsRef<Path>,
     {
-        let path = path.as_ref();
-        let raw = poll_fn(|cx| sftp.poll_open(cx, path, self, sys::LIBSSH2_SFTP_OPENFILE)).await?;
+        let path = path_to_bytes(path.as_ref())?;
+        let raw = poll_fn(|cx| {
+            sftp.poll_open(
+                cx, //
+                &*path,
+                self,
+                sys::LIBSSH2_SFTP_OPENFILE,
+            )
+        })
+        .await?;
         Ok(File(Handle { raw, sftp }))
     }
 }
@@ -184,13 +191,12 @@ impl<'sess> Sftp<'sess> {
     fn poll_stat(
         &mut self,
         cx: &mut task::Context<'_>,
-        path: &Path,
+        path: &[u8],
         stat_type: libc::c_int,
         attrs: *mut sys::LIBSSH2_SFTP_ATTRIBUTES,
     ) -> Poll<Result<()>> {
         unsafe {
             let sftp = self.raw.as_mut();
-            let path = path.as_os_str().as_bytes();
             self.sess.poll_with(cx, |_| {
                 let rc = sys::libssh2_sftp_stat_ex(
                     sftp,
@@ -212,13 +218,13 @@ impl<'sess> Sftp<'sess> {
 
     /// Acquire the metadata for a file.
     pub async fn stat(&mut self, path: impl AsRef<Path>) -> Result<FileAttr> {
-        let path = path.as_ref();
+        let path = path_to_bytes(path.as_ref())?;
         unsafe {
             let mut stbuf = mem::MaybeUninit::zeroed();
             poll_fn(|cx| {
                 self.poll_stat(
                     cx, //
-                    path,
+                    &*path,
                     sys::LIBSSH2_SFTP_STAT,
                     stbuf.as_mut_ptr(),
                 )
@@ -230,13 +236,13 @@ impl<'sess> Sftp<'sess> {
 
     /// Acquire the metadata for a file.
     pub async fn lstat(&mut self, path: impl AsRef<Path>) -> Result<FileAttr> {
-        let path = path.as_ref();
+        let path = path_to_bytes(path.as_ref())?;
         unsafe {
             let mut stbuf = mem::MaybeUninit::zeroed();
             poll_fn(|cx| {
                 self.poll_stat(
                     cx, //
-                    path,
+                    &*path,
                     sys::LIBSSH2_SFTP_LSTAT,
                     stbuf.as_mut_ptr(),
                 )
@@ -247,12 +253,12 @@ impl<'sess> Sftp<'sess> {
     }
 
     pub async fn setstat(&mut self, path: impl AsRef<Path>, attrs: FileAttr) -> Result<()> {
-        let path = path.as_ref();
+        let path = path_to_bytes(path.as_ref())?;
         let mut attrs = attrs;
         poll_fn(|cx| {
             self.poll_stat(
                 cx, //
-                path,
+                &*path,
                 sys::LIBSSH2_SFTP_SETSTAT,
                 &mut attrs.0,
             )
@@ -264,12 +270,11 @@ impl<'sess> Sftp<'sess> {
     fn poll_open(
         &mut self,
         cx: &mut task::Context<'_>,
-        path: &Path,
+        path: &[u8],
         options: &OpenOptions,
         open_type: libc::c_int,
     ) -> Poll<Result<NonNull<sys::LIBSSH2_SFTP_HANDLE>>> {
         let sftp = &mut self.raw;
-        let path = path.as_os_str().as_bytes();
         let flags = options.flags;
         let mode = options.mode;
         self.sess.poll_with(cx, |sess| {
@@ -277,7 +282,7 @@ impl<'sess> Sftp<'sess> {
                 sys::libssh2_sftp_open_ex(
                     sftp.as_mut(),
                     path.as_ptr() as *const libc::c_char,
-                    path.as_ref().len() as libc::c_uint,
+                    path.len() as libc::c_uint,
                     flags,
                     mode,
                     open_type,
@@ -295,11 +300,11 @@ impl<'sess> Sftp<'sess> {
     }
 
     pub async fn opendir<'a>(&'a mut self, path: impl AsRef<Path>) -> Result<Dir<'a, 'sess>> {
-        let path = path.as_ref();
+        let path = path_to_bytes(path.as_ref())?;
         let mut options = OpenOptions::new();
         options.read(true);
         let raw =
-            poll_fn(|cx| self.poll_open(cx, path, &options, sys::LIBSSH2_SFTP_OPENDIR)).await?;
+            poll_fn(|cx| self.poll_open(cx, &*path, &options, sys::LIBSSH2_SFTP_OPENDIR)).await?;
         Ok(Dir(Handle { raw, sftp: self }))
     }
 }
@@ -522,7 +527,7 @@ impl Dir<'_, '_> {
         };
 
         Ok(Some(DirEntry {
-            path: PathBuf::from(OsStr::from_bytes(&*path)),
+            path: bytes_to_path(path)?,
             attr: FileAttr(unsafe { attr.assume_init() }),
         }))
     }

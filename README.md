@@ -4,7 +4,7 @@
 
 <div align="center">
   <strong>
-    A libssh2 Rust bindings focusd on interoperability with Tokio.
+    A libssh2 Rust bindings focused on interoperability with Tokio.
   </strong>
 </div>
 
