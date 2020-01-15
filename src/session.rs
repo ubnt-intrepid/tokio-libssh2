@@ -19,19 +19,11 @@ use std::{
 };
 use tokio::io::PollEvented;
 
-// TODO: systest
-const LIBSSH2_SESSION_BLOCK_INBOUND: libc::c_int = 0x0001;
-const LIBSSH2_SESSION_BLOCK_OUTBOUND: libc::c_int = 0x0002;
-
-extern "C" {
-    fn libssh2_session_block_directions(sess: *mut sys::LIBSSH2_SESSION) -> libc::c_int;
-}
-
 bitflags::bitflags! {
     #[repr(transparent)]
     struct BlockDirections: libc::c_int {
-        const READ = LIBSSH2_SESSION_BLOCK_INBOUND;
-        const WRITE = LIBSSH2_SESSION_BLOCK_OUTBOUND;
+        const READ = sys::LIBSSH2_SESSION_BLOCK_INBOUND;
+        const WRITE = sys::LIBSSH2_SESSION_BLOCK_OUTBOUND;
     }
 }
 
@@ -123,9 +115,8 @@ impl Session {
         match f(&mut *self) {
             Ok(ret) => Poll::Ready(Ok(ret)),
             Err(ref err) if err.code() == sys::LIBSSH2_ERROR_EAGAIN => {
-                let directions = unsafe {
-                    libssh2_session_block_directions(self.raw.as_mut()) //
-                };
+                let directions =
+                    unsafe { sys::libssh2_session_block_directions(self.raw.as_mut()) };
                 self.blocking_directions = Some(BlockDirections::from_bits_truncate(directions));
                 tracing::trace!("blocking_directions={:?}", self.blocking_directions);
 
