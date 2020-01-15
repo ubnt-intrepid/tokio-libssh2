@@ -274,15 +274,6 @@
 <span id="274">274</span>
 <span id="275">275</span>
 <span id="276">276</span>
-<span id="277">277</span>
-<span id="278">278</span>
-<span id="279">279</span>
-<span id="280">280</span>
-<span id="281">281</span>
-<span id="282">282</span>
-<span id="283">283</span>
-<span id="284">284</span>
-<span id="285">285</span>
 </pre><div class="example-wrap"><pre class="rust ">
 <span class="kw">use</span> <span class="kw">crate</span>::{
     <span class="ident">auth</span>::{<span class="ident">AuthContext</span>, <span class="ident">Authenticator</span>},
@@ -305,19 +296,11 @@
 };
 <span class="kw">use</span> <span class="ident">tokio</span>::<span class="ident">io</span>::<span class="ident">PollEvented</span>;
 
-<span class="comment">// TODO: systest</span>
-<span class="kw">const</span> <span class="ident">LIBSSH2_SESSION_BLOCK_INBOUND</span>: <span class="ident">libc</span>::<span class="ident">c_int</span> <span class="op">=</span> <span class="number">0x0001</span>;
-<span class="kw">const</span> <span class="ident">LIBSSH2_SESSION_BLOCK_OUTBOUND</span>: <span class="ident">libc</span>::<span class="ident">c_int</span> <span class="op">=</span> <span class="number">0x0002</span>;
-
-<span class="kw">extern</span> <span class="string">&quot;C&quot;</span> {
-    <span class="kw">fn</span> <span class="ident">libssh2_session_block_directions</span>(<span class="ident">sess</span>: <span class="kw-2">*</span><span class="kw-2">mut</span> <span class="ident">sys</span>::<span class="ident">LIBSSH2_SESSION</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="ident">libc</span>::<span class="ident">c_int</span>;
-}
-
 <span class="ident">bitflags</span>::<span class="macro">bitflags</span><span class="macro">!</span> {
     <span class="attribute">#[<span class="ident">repr</span>(<span class="ident">transparent</span>)]</span>
     <span class="kw">struct</span> <span class="ident">BlockDirections</span>: <span class="ident">libc</span>::<span class="ident">c_int</span> {
-        <span class="kw">const</span> <span class="ident">READ</span> <span class="op">=</span> <span class="ident">LIBSSH2_SESSION_BLOCK_INBOUND</span>;
-        <span class="kw">const</span> <span class="ident">WRITE</span> <span class="op">=</span> <span class="ident">LIBSSH2_SESSION_BLOCK_OUTBOUND</span>;
+        <span class="kw">const</span> <span class="ident">READ</span> <span class="op">=</span> <span class="ident">sys</span>::<span class="ident">LIBSSH2_SESSION_BLOCK_INBOUND</span>;
+        <span class="kw">const</span> <span class="ident">WRITE</span> <span class="op">=</span> <span class="ident">sys</span>::<span class="ident">LIBSSH2_SESSION_BLOCK_OUTBOUND</span>;
     }
 }
 
@@ -409,9 +392,8 @@
         <span class="kw">match</span> <span class="ident">f</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="kw-2">*</span><span class="self">self</span>) {
             <span class="prelude-val">Ok</span>(<span class="ident">ret</span>) <span class="op">=</span><span class="op">&gt;</span> <span class="ident">Poll</span>::<span class="ident">Ready</span>(<span class="prelude-val">Ok</span>(<span class="ident">ret</span>)),
             <span class="prelude-val">Err</span>(<span class="kw-2">ref</span> <span class="ident">err</span>) <span class="kw">if</span> <span class="ident">err</span>.<span class="ident">code</span>() <span class="op">=</span><span class="op">=</span> <span class="ident">sys</span>::<span class="ident">LIBSSH2_ERROR_EAGAIN</span> <span class="op">=</span><span class="op">&gt;</span> {
-                <span class="kw">let</span> <span class="ident">directions</span> <span class="op">=</span> <span class="kw">unsafe</span> {
-                    <span class="ident">libssh2_session_block_directions</span>(<span class="self">self</span>.<span class="ident">raw</span>.<span class="ident">as_mut</span>()) <span class="comment">//</span>
-                };
+                <span class="kw">let</span> <span class="ident">directions</span> <span class="op">=</span>
+                    <span class="kw">unsafe</span> { <span class="ident">sys</span>::<span class="ident">libssh2_session_block_directions</span>(<span class="self">self</span>.<span class="ident">raw</span>.<span class="ident">as_mut</span>()) };
                 <span class="self">self</span>.<span class="ident">blocking_directions</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">BlockDirections</span>::<span class="ident">from_bits_truncate</span>(<span class="ident">directions</span>));
                 <span class="ident">tracing</span>::<span class="macro">trace</span><span class="macro">!</span>(<span class="string">&quot;blocking_directions={:?}&quot;</span>, <span class="self">self</span>.<span class="ident">blocking_directions</span>);
 
