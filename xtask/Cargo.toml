@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+publish = false
+authors = ["Yusuke Sasaki <yusuke.sasaki.nuem@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+anyhow = "1"
+structopt = "0.3"

@@ -1,0 +1,3 @@
+[alias]
+xtask = "run -p xtask --"
+xscript = "xtask script --"

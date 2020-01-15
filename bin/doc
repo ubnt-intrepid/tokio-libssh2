@@ -1,0 +1,20 @@
+#!/bin/bash
+
+DIR="$(cd $(dirname $BASH_SOURCE)/..; pwd)"
+echo "DIR=${DIR}"
+
+set -ex
+
+cargo fetch
+rm -rfv $DIR/target/doc
+
+timeout -sKILL 900 cargo doc --no-deps -p tokio-libssh2
+
+rm -rfv $DIR/target/doc/.lock
+
+echo '<meta http-equiv="refresh" content="0;url=tokio_libssh2">' > $DIR/target/doc/index.html
+
+if [[ "${1:-}" == "--serve" ]]; then
+   cd $DIR/target/doc
+   python3 -m http.server
+fi
