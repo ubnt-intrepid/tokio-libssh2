@@ -169,7 +169,6 @@ pub struct Sftp<'sess> {
 
 impl Drop for Sftp<'_> {
     fn drop(&mut self) {
-        tracing::trace!("Sftp::drop");
         unsafe {
             // FIXME: should we handle EAGAIN at here?
             let _ = sys::libssh2_sftp_shutdown(self.raw.as_ptr());
@@ -192,7 +191,7 @@ impl<'sess> Sftp<'sess> {
         unsafe {
             let sftp = self.raw.as_mut();
             let path = path.as_os_str().as_bytes();
-            self.sess.poll_write_with(cx, |_| {
+            self.sess.poll_with(cx, |_| {
                 let rc = sys::libssh2_sftp_stat_ex(
                     sftp,
                     path.as_ptr() as *const libc::c_char,
@@ -273,7 +272,7 @@ impl<'sess> Sftp<'sess> {
         let path = path.as_os_str().as_bytes();
         let flags = options.flags;
         let mode = options.mode;
-        self.sess.poll_write_with(cx, |sess| {
+        self.sess.poll_with(cx, |sess| {
             let raw = NonNull::new(unsafe {
                 sys::libssh2_sftp_open_ex(
                     sftp.as_mut(),
@@ -329,7 +328,7 @@ impl Handle<'_, '_> {
         let handle = &mut self.raw;
         let sftp = &mut self.sftp.raw;
         let setstat = if setstat { 1 } else { 0 };
-        self.sftp.sess.poll_write_with(cx, |_| {
+        self.sftp.sess.poll_with(cx, |_| {
             let rc = unsafe { sys::libssh2_sftp_fstat_ex(handle.as_mut(), attrs, setstat) };
             match rc {
                 0 => Ok(()),
@@ -342,7 +341,7 @@ impl Handle<'_, '_> {
 
     fn poll_read(&mut self, cx: &mut task::Context<'_>, dst: &mut [u8]) -> Poll<Result<usize>> {
         let handle = &mut self.raw;
-        self.sftp.sess.poll_read_with(cx, |sess| {
+        self.sftp.sess.poll_with(cx, |sess| {
             sess.rc(unsafe {
                 sys::libssh2_sftp_read(
                     handle.as_mut(),
@@ -356,7 +355,7 @@ impl Handle<'_, '_> {
 
     fn poll_write(&mut self, cx: &mut task::Context<'_>, src: &[u8]) -> Poll<Result<usize>> {
         let handle = &mut self.raw;
-        self.sftp.sess.poll_read_with(cx, |sess| {
+        self.sftp.sess.poll_with(cx, |sess| {
             sess.rc(unsafe {
                 sys::libssh2_sftp_write(
                     handle.as_mut(),
@@ -370,7 +369,7 @@ impl Handle<'_, '_> {
 
     fn poll_fsync(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<()>> {
         let handle = &mut self.raw;
-        self.sftp.sess.poll_read_with(cx, |sess| {
+        self.sftp.sess.poll_with(cx, |sess| {
             sess.rc(unsafe { sys::libssh2_sftp_fsync(handle.as_mut()) })
                 .map(drop)
         })
@@ -387,7 +386,7 @@ impl Handle<'_, '_> {
         }
 
         let handle = &mut self.raw;
-        self.sftp.sess.poll_read_with(cx, |sess| {
+        self.sftp.sess.poll_with(cx, |sess| {
             let res = sess.rc(unsafe {
                 sys::libssh2_sftp_readdir_ex(
                     handle.as_mut(),

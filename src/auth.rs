@@ -31,7 +31,7 @@ impl<T: AsRef<str>> Authenticator for PasswordAuth<T> {
     ) -> Poll<Result<()>> {
         let username = auth.username;
         let password = self.password.as_ref();
-        auth.sess.poll_write_with(cx, |sess| {
+        auth.sess.poll_with(cx, |sess| {
             let rc = unsafe {
                 sys::libssh2_userauth_password_ex(
                     sess.as_raw_ptr(),

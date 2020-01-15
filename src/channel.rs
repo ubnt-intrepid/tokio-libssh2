@@ -19,7 +19,6 @@ pub struct Channel<'sess> {
 
 impl Drop for Channel<'_> {
     fn drop(&mut self) {
-        tracing::trace!("Channel::drop");
         unsafe {
             // FIXME: should we handle EAGAIN at here?
             sys::libssh2_channel_free(self.raw.as_ptr());
@@ -36,7 +35,7 @@ impl<'sess> Channel<'sess> {
     pub async fn setenv<'a>(&'a mut self, name: &'a str, value: &'a str) -> Result<()> {
         poll_fn(|cx| {
             let channel = &mut self.raw;
-            self.sess.poll_write_with(cx, |sess| {
+            self.sess.poll_with(cx, |sess| {
                 sess.rc(unsafe {
                     sys::libssh2_channel_setenv_ex(
                         channel.as_mut(),
@@ -58,18 +57,13 @@ impl<'sess> Channel<'sess> {
         request: &'a str,
         message: Option<&'a str>,
     ) -> Result<()> {
-        tracing::trace!(
-            "Channel::startup_process(request={:?}, message={:?})",
-            request,
-            message
-        );
         poll_fn(|cx| {
             let channel = &mut self.raw;
             let (msg, msg_len) = match message {
                 Some(msg) => (msg.as_ptr(), msg.len()),
                 None => (ptr::null(), 0),
             };
-            self.sess.poll_write_with(cx, |sess| {
+            self.sess.poll_with(cx, |sess| {
                 sess.rc(unsafe {
                     sys::libssh2_channel_process_startup(
                         channel.as_mut(),
@@ -119,7 +113,7 @@ impl<'sess> Channel<'sess> {
         dst: &mut [u8],
     ) -> Poll<Result<usize>> {
         let channel = &mut self.raw;
-        self.sess.poll_read_with(cx, |sess| {
+        self.sess.poll_with(cx, |sess| {
             sess.rc(unsafe {
                 sys::libssh2_channel_read_ex(
                     channel.as_mut(),
@@ -139,7 +133,7 @@ impl<'sess> Channel<'sess> {
         src: &[u8],
     ) -> Poll<Result<usize>> {
         let channel = &mut self.raw;
-        self.sess.poll_write_with(cx, |sess| {
+        self.sess.poll_with(cx, |sess| {
             sess.rc(unsafe {
                 sys::libssh2_channel_write_ex(
                     channel.as_mut(),
@@ -154,7 +148,7 @@ impl<'sess> Channel<'sess> {
 
     fn poll_flush(&mut self, cx: &mut task::Context<'_>, stream_id: i32) -> Poll<Result<()>> {
         let channel = &mut self.raw;
-        self.sess.poll_write_with(cx, |sess| {
+        self.sess.poll_with(cx, |sess| {
             sess.rc(unsafe { sys::libssh2_channel_flush_ex(channel.as_mut(), stream_id) })
                 .map(drop)
         })
@@ -162,7 +156,7 @@ impl<'sess> Channel<'sess> {
 
     fn poll_close(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<()>> {
         let channel = &mut self.raw;
-        self.sess.poll_write_with(cx, |sess| {
+        self.sess.poll_with(cx, |sess| {
             sess.rc(unsafe { sys::libssh2_channel_close(channel.as_mut()) })
                 .map(drop)
         })

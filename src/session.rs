@@ -19,14 +19,30 @@ use std::{
 };
 use tokio::io::PollEvented;
 
+// TODO: systest
+const LIBSSH2_SESSION_BLOCK_INBOUND: libc::c_int = 0x0001;
+const LIBSSH2_SESSION_BLOCK_OUTBOUND: libc::c_int = 0x0002;
+
+extern "C" {
+    fn libssh2_session_block_directions(sess: *mut sys::LIBSSH2_SESSION) -> libc::c_int;
+}
+
+bitflags::bitflags! {
+    #[repr(transparent)]
+    struct BlockDirections: libc::c_int {
+        const READ = LIBSSH2_SESSION_BLOCK_INBOUND;
+        const WRITE = LIBSSH2_SESSION_BLOCK_OUTBOUND;
+    }
+}
+
 pub struct Session {
     raw: NonNull<sys::LIBSSH2_SESSION>,
     stream: Option<PollEvented<TcpStream>>,
+    blocking_directions: Option<BlockDirections>,
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        tracing::trace!("Session::drop");
         unsafe {
             let _ = sys::libssh2_session_free(self.raw.as_ptr());
         }
@@ -35,12 +51,10 @@ impl Drop for Session {
 
 impl Session {
     pub fn new() -> Result<Self> {
-        tracing::trace!("Session::new");
-
         sys::init();
 
         unsafe {
-            let mut raw = NonNull::new(sys::libssh2_session_init_ex(
+            let raw = NonNull::new(sys::libssh2_session_init_ex(
                 /* alloc */ None,
                 /* free */ None,
                 /* realloc */ None,
@@ -48,9 +62,11 @@ impl Session {
             ))
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "failed to init the session"))?;
 
-            sys::libssh2_session_set_blocking(raw.as_mut(), 0);
-
-            Ok(Self { raw, stream: None })
+            Ok(Self {
+                raw,
+                stream: None,
+                blocking_directions: None,
+            })
         }
     }
 
@@ -75,97 +91,77 @@ impl Session {
         self.stream.as_mut().unwrap()
     }
 
-    pub(crate) fn poll_read_with<F, R>(
-        &mut self,
-        cx: &mut task::Context<'_>,
-        f: F,
-    ) -> Poll<Result<R>>
+    #[allow(clippy::cognitive_complexity)]
+    pub(crate) fn poll_with<F, R>(&mut self, cx: &mut task::Context<'_>, f: F) -> Poll<Result<R>>
     where
         F: FnOnce(&mut Self) -> std::result::Result<R, Ssh2Error>,
     {
-        use mio::unix::UnixReady;
-        use mio::Ready;
+        fn read_mask() -> mio::Ready {
+            let mut mask = mio::Ready::readable();
+            mask |= mio::unix::UnixReady::error();
+            mask
+        }
 
-        let mut mask = Ready::readable();
-        mask |= UnixReady::error();
-
-        ready!(self.stream_mut().poll_read_ready(cx, mask))?;
+        let mut read_ready = false;
+        let mut write_ready = false;
+        if let Some(directions) = self.blocking_directions {
+            if directions.contains(BlockDirections::READ) {
+                tracing::trace!("poll read readiness");
+                ready!(self.stream_mut().poll_read_ready(cx, read_mask()))?;
+                read_ready = true;
+            }
+            if directions.contains(BlockDirections::WRITE) {
+                tracing::trace!("poll write readiness");
+                ready!(self.stream_mut().poll_write_ready(cx))?;
+                write_ready = true;
+            }
+        }
+        self.blocking_directions.take();
 
         match f(&mut *self) {
             Ok(ret) => Poll::Ready(Ok(ret)),
             Err(ref err) if err.code() == sys::LIBSSH2_ERROR_EAGAIN => {
-                self.stream_mut().clear_read_ready(cx, mask)?;
+                let directions = unsafe {
+                    libssh2_session_block_directions(self.raw.as_mut()) //
+                };
+                self.blocking_directions = Some(BlockDirections::from_bits_truncate(directions));
+                tracing::trace!("blocking_directions={:?}", self.blocking_directions);
+
+                let stream = self.stream_mut();
+                if read_ready {
+                    tracing::trace!("clear read readiness");
+                    stream.clear_read_ready(cx, read_mask())?;
+                }
+                if write_ready {
+                    tracing::trace!("clear write readiness");
+                    stream.clear_write_ready(cx)?;
+                }
+
                 Poll::Pending
             }
             Err(err) => Poll::Ready(Err(err.into())),
-        }
-    }
-
-    pub(crate) fn poll_write_with<F, R>(
-        &mut self,
-        cx: &mut task::Context<'_>,
-        f: F,
-    ) -> Poll<Result<R>>
-    where
-        F: FnOnce(&mut Self) -> std::result::Result<R, Ssh2Error>,
-    {
-        ready!(self.stream_mut().poll_write_ready(cx))?;
-
-        match f(&mut *self) {
-            Ok(ret) => Poll::Ready(Ok(ret)),
-            Err(ref err) if err.code() == sys::LIBSSH2_ERROR_EAGAIN => {
-                self.stream_mut().clear_write_ready(cx)?;
-                Poll::Pending
-            }
-            Err(err) => Poll::Ready(Err(err.into())),
-        }
-    }
-
-    fn poll_handshake(
-        &mut self,
-        cx: &mut task::Context<'_>,
-        stream: &mut PollEvented<TcpStream>,
-    ) -> Poll<Result<()>> {
-        use mio::unix::UnixReady;
-        use mio::Ready;
-
-        let mut mask = Ready::readable();
-        mask |= UnixReady::error();
-
-        ready!(stream.poll_read_ready(cx, mask))?;
-
-        let rc = unsafe {
-            sys::libssh2_session_handshake(
-                self.raw.as_mut(), //
-                stream.get_ref().as_raw_fd(),
-            )
-        };
-
-        match rc {
-            0 => Poll::Ready(Ok(())),
-            sys::LIBSSH2_ERROR_EAGAIN => {
-                stream.clear_read_ready(cx, mask)?;
-                Poll::Pending
-            }
-            code => Poll::Ready(Err(Ssh2Error::from_code(code).into())),
         }
     }
 
     /// Start the transport layer protocol negotiation with the connected host.
     pub async fn handshake(&mut self, stream: std::net::TcpStream) -> Result<()> {
-        tracing::trace!("Session::handshake");
-        let mut stream = PollEvented::new(TcpStream::from_stream(stream)?)?;
-        poll_fn(|cx| self.poll_handshake(cx, &mut stream)).await?;
-        tracing::trace!("handshake completed");
-        self.stream = Some(stream);
-        Ok(())
+        let stream = PollEvented::new(TcpStream::from_stream(stream)?)?;
+        self.stream.replace(stream);
+        poll_fn(|cx| {
+            let raw = self.raw.as_ptr();
+            self.poll_with(cx, |sess| {
+                let fd = sess.stream.as_ref().unwrap().get_ref().as_raw_fd();
+                sess.rc(unsafe { sys::libssh2_session_handshake(raw, fd) })
+                    .map(drop)
+            })
+        })
+        .await
     }
 
     pub async fn authenticate<'a, A>(&'a mut self, username: &'a str, auth: A) -> Result<()>
     where
         A: Authenticator + Unpin,
     {
-        tracing::trace!("Session::authenticate");
         let mut auth = auth;
         poll_fn(|cx| {
             Pin::new(&mut auth).poll_authenticate(
@@ -186,10 +182,8 @@ impl Session {
         packet_size: Option<u32>,
         msg: Option<&'a str>,
     ) -> Result<Channel<'a>> {
-        tracing::trace!("Session::open_channel(type={:?})", channel_type);
-
         let raw = poll_fn(|cx| {
-            self.poll_write_with(cx, |sess| {
+            self.poll_with(cx, |sess| {
                 let window_size = window_size.unwrap_or(sys::LIBSSH2_CHANNEL_WINDOW_DEFAULT);
                 let packet_size = packet_size.unwrap_or(sys::LIBSSH2_CHANNEL_PACKET_DEFAULT);
                 let (msg, msg_len) = match msg {
@@ -226,9 +220,8 @@ impl Session {
 
     #[allow(clippy::needless_lifetimes)]
     pub async fn sftp<'sess>(&'sess mut self) -> Result<Sftp<'sess>> {
-        tracing::trace!("Session::sftp");
         let raw = poll_fn(|cx| {
-            self.poll_write_with(cx, |sess| {
+            self.poll_with(cx, |sess| {
                 NonNull::new(unsafe { sys::libssh2_sftp_init(sess.raw.as_mut()) }) //
                     .ok_or_else(|| sess.last_error())
             })
