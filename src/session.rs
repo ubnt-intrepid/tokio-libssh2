@@ -12,7 +12,7 @@ use futures::{
 use libssh2_sys as sys;
 use mio::net::TcpStream;
 use std::{
-    io,
+    ffi::{CStr, CString},
     os::unix::prelude::*,
     pin::Pin,
     ptr::{self, NonNull},
@@ -35,6 +35,7 @@ bitflags::bitflags! {
     }
 }
 
+/// A handle to an SSH session.
 pub struct Session {
     raw: NonNull<sys::LIBSSH2_SESSION>,
     stream: Option<PollEvented<TcpStream>>,
@@ -50,6 +51,7 @@ impl Drop for Session {
 }
 
 impl Session {
+    /// Initialize an SSH session.
     pub fn new() -> Result<Self> {
         sys::init();
 
@@ -60,7 +62,7 @@ impl Session {
                 /* realloc */ None,
                 ptr::null_mut(),
             ))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "failed to init the session"))?;
+            .ok_or_else(|| Ssh2Error::new(0, "failed to initialize SSH session"))?;
 
             Ok(Self {
                 raw,
@@ -143,6 +145,16 @@ impl Session {
         }
     }
 
+    /// Set the banner that will be sent to the remote host when the SSH session is started.
+    ///
+    /// By default, a banner corresponding to the protocol and libssh2 version will be sent.
+    pub fn set_banner(&mut self, banner: impl AsRef<str>) -> Result<()> {
+        let banner = CString::new(banner.as_ref())?;
+        let raw = self.raw.as_ptr();
+        self.rc(unsafe { sys::libssh2_session_banner_set(raw, banner.as_ptr()) })?;
+        Ok(())
+    }
+
     /// Start the transport layer protocol negotiation with the connected host.
     pub async fn handshake(&mut self, stream: std::net::TcpStream) -> Result<()> {
         let stream = PollEvented::new(TcpStream::from_stream(stream)?)?;
@@ -158,6 +170,7 @@ impl Session {
         .await
     }
 
+    /// Attempt the specified authentication.
     pub async fn authenticate<'a, A>(&'a mut self, username: &'a str, auth: A) -> Result<()>
     where
         A: Authenticator + Unpin,
@@ -173,6 +186,30 @@ impl Session {
             )
         })
         .await
+    }
+
+    /// Return whether the session has been successfully authenticated or not.
+    pub fn authenticated(&self) -> bool {
+        unsafe { sys::libssh2_userauth_authenticated(self.raw.as_ptr()) != 0 }
+    }
+
+    /// List the supported authentication methods for an user.
+    pub async fn list_userauth(&mut self, username: &str) -> Result<Vec<u8>> {
+        let list = poll_fn(|cx| {
+            self.poll_with(cx, |sess| {
+                let list = NonNull::new(unsafe {
+                    sys::libssh2_userauth_list(
+                        sess.raw.as_mut(),
+                        username.as_ptr() as *const libc::c_char,
+                        username.len() as libc::c_uint,
+                    )
+                })
+                .ok_or_else(|| sess.last_error())?;
+                Ok(unsafe { CStr::from_ptr(list.as_ptr()).to_owned() })
+            })
+        })
+        .await?;
+        Ok(list.into_bytes())
     }
 
     pub async fn open_channel<'a>(

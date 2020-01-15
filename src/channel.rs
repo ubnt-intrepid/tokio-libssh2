@@ -193,7 +193,7 @@ impl AsyncWrite for Channel<'_> {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         self.get_mut()
             .poll_close(cx)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| err.into_io_error())
     }
 }
 
@@ -212,7 +212,7 @@ impl AsyncRead for Stream<'_, '_> {
         let me = self.get_mut();
         me.channel
             .poll_read(cx, me.stream_id, dst)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| err.into_io_error())
     }
 }
 
@@ -225,14 +225,14 @@ impl AsyncWrite for Stream<'_, '_> {
         let me = self.get_mut();
         me.channel
             .poll_write(cx, me.stream_id, src)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| err.into_io_error())
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         let me = self.get_mut();
         me.channel
             .poll_flush(cx, me.stream_id)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| err.into_io_error())
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {

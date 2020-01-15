@@ -451,7 +451,7 @@ impl AsyncRead for File<'_, '_> {
         self.get_mut()
             .0
             .poll_read(cx, dst)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| err.into_io_error())
     }
 }
 
@@ -464,14 +464,14 @@ impl AsyncWrite for File<'_, '_> {
         self.get_mut()
             .0
             .poll_write(cx, src)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| err.into_io_error())
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         self.get_mut()
             .0
             .poll_fsync(cx)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| err.into_io_error())
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut task::Context<'_>) -> Poll<io::Result<()>> {

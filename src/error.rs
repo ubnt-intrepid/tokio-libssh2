@@ -1,5 +1,5 @@
 use libssh2_sys as sys;
-use std::{borrow::Cow, error, fmt, io, ptr};
+use std::{borrow::Cow, error, ffi::NulError, fmt, io, ptr};
 
 #[derive(Debug)]
 pub struct Ssh2Error {
@@ -127,9 +127,27 @@ impl Ssh2Error {
 #[derive(Debug)]
 pub struct Error(ErrorKind);
 
+impl Error {
+    pub(crate) fn into_io_error(self) -> io::Error {
+        match self.0 {
+            ErrorKind::Io(err) => err,
+            ErrorKind::Nul(err) => io::Error::from(err),
+            ErrorKind::Ssh2(err) => {
+                let kind = match err.code() {
+                    sys::LIBSSH2_ERROR_TIMEOUT => io::ErrorKind::TimedOut,
+                    sys::LIBSSH2_ERROR_EAGAIN => io::ErrorKind::WouldBlock,
+                    _ => io::ErrorKind::Other,
+                };
+                io::Error::new(kind, err)
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 enum ErrorKind {
     Io(io::Error),
+    Nul(NulError),
     Ssh2(Ssh2Error),
 }
 
@@ -137,6 +155,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             ErrorKind::Io(ref err) => write!(f, "I/O error: {}", err),
+            ErrorKind::Nul(ref err) => write!(f, "Nul error: {}", err),
             ErrorKind::Ssh2(ref err) => write!(f, "libssh2 error: {}", err),
         }
     }
@@ -146,6 +165,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self.0 {
             ErrorKind::Io(ref err) => Some(err),
+            ErrorKind::Nul(ref err) => Some(err),
             ErrorKind::Ssh2(ref err) => Some(err),
         }
     }
@@ -154,6 +174,12 @@ impl std::error::Error for Error {
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
         Self(ErrorKind::Io(err))
+    }
+}
+
+impl From<NulError> for Error {
+    fn from(err: NulError) -> Self {
+        Self(ErrorKind::Nul(err))
     }
 }
 
