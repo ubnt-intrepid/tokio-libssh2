@@ -22,7 +22,13 @@ tracing = "0.1"
 
 [dev-dependencies]
 anyhow = "1"
+libtest-mimic = "0.2"
 tracing-subscriber = "0.1"
+
+[[test]]
+name = "test_integration"
+path = "tests/test_integration/main.rs"
+harness = false
 
 [workspace]
 members = [
