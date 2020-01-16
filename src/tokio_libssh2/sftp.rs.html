@@ -527,12 +527,18 @@
 <span id="527">527</span>
 <span id="528">528</span>
 <span id="529">529</span>
+<span id="530">530</span>
+<span id="531">531</span>
+<span id="532">532</span>
+<span id="533">533</span>
+<span id="534">534</span>
 </pre><div class="example-wrap"><pre class="rust ">
 <span class="doccomment">//! SFTP subsystem.</span>
 
 <span class="kw">use</span> <span class="kw">crate</span>::{
     <span class="ident">error</span>::{<span class="prelude-ty">Result</span>, <span class="ident">Ssh2Error</span>},
     <span class="ident">session</span>::<span class="ident">Session</span>,
+    <span class="ident">util</span>::{<span class="ident">bytes_to_path</span>, <span class="ident">path_to_bytes</span>},
 };
 <span class="kw">use</span> <span class="ident">futures</span>::{
     <span class="ident">future</span>::<span class="ident">poll_fn</span>,
@@ -540,11 +546,9 @@
 };
 <span class="kw">use</span> <span class="ident">libssh2_sys</span> <span class="kw">as</span> <span class="ident">sys</span>;
 <span class="kw">use</span> <span class="ident">std</span>::{
-    <span class="ident">ffi</span>::<span class="ident">OsStr</span>, <span class="comment">//</span>
-    <span class="ident">fmt</span>,
+    <span class="ident">fmt</span>, <span class="comment">//</span>
     <span class="ident">io</span>,
     <span class="ident">mem</span>,
-    <span class="ident">os</span>::<span class="ident">unix</span>::<span class="ident">prelude</span>::<span class="kw-2">*</span>,
     <span class="ident">path</span>::{<span class="ident">Path</span>, <span class="ident">PathBuf</span>},
     <span class="ident">pin</span>::<span class="ident">Pin</span>,
     <span class="ident">ptr</span>::{<span class="self">self</span>, <span class="ident">NonNull</span>},
@@ -685,8 +689,16 @@
     <span class="kw">where</span>
         <span class="ident">P</span>: <span class="ident">AsRef</span><span class="op">&lt;</span><span class="ident">Path</span><span class="op">&gt;</span>,
     {
-        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path</span>.<span class="ident">as_ref</span>();
-        <span class="kw">let</span> <span class="ident">raw</span> <span class="op">=</span> <span class="ident">poll_fn</span>(<span class="op">|</span><span class="ident">cx</span><span class="op">|</span> <span class="ident">sftp</span>.<span class="ident">poll_open</span>(<span class="ident">cx</span>, <span class="ident">path</span>, <span class="self">self</span>, <span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_OPENFILE</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path_to_bytes</span>(<span class="ident">path</span>.<span class="ident">as_ref</span>())<span class="question-mark">?</span>;
+        <span class="kw">let</span> <span class="ident">raw</span> <span class="op">=</span> <span class="ident">poll_fn</span>(<span class="op">|</span><span class="ident">cx</span><span class="op">|</span> {
+            <span class="ident">sftp</span>.<span class="ident">poll_open</span>(
+                <span class="ident">cx</span>, <span class="comment">//</span>
+                <span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">path</span>,
+                <span class="self">self</span>,
+                <span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_OPENFILE</span>,
+            )
+        })
+        .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="ident">File</span>(<span class="ident">Handle</span> { <span class="ident">raw</span>, <span class="ident">sftp</span> }))
     }
 }
@@ -714,13 +726,12 @@
     <span class="kw">fn</span> <span class="ident">poll_stat</span>(
         <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>,
         <span class="ident">cx</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">task</span>::<span class="ident">Context</span><span class="op">&lt;</span><span class="lifetime">&#39;_</span><span class="op">&gt;</span>,
-        <span class="ident">path</span>: <span class="kw-2">&amp;</span><span class="ident">Path</span>,
+        <span class="ident">path</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>],
         <span class="ident">stat_type</span>: <span class="ident">libc</span>::<span class="ident">c_int</span>,
         <span class="ident">attrs</span>: <span class="kw-2">*</span><span class="kw-2">mut</span> <span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_ATTRIBUTES</span>,
     ) <span class="op">-</span><span class="op">&gt;</span> <span class="ident">Poll</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span><span class="op">&gt;</span> {
         <span class="kw">unsafe</span> {
             <span class="kw">let</span> <span class="ident">sftp</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">raw</span>.<span class="ident">as_mut</span>();
-            <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path</span>.<span class="ident">as_os_str</span>().<span class="ident">as_bytes</span>();
             <span class="self">self</span>.<span class="ident">sess</span>.<span class="ident">poll_with</span>(<span class="ident">cx</span>, <span class="op">|</span><span class="kw">_</span><span class="op">|</span> {
                 <span class="kw">let</span> <span class="ident">rc</span> <span class="op">=</span> <span class="ident">sys</span>::<span class="ident">libssh2_sftp_stat_ex</span>(
                     <span class="ident">sftp</span>,
@@ -742,13 +753,13 @@
 
     <span class="doccomment">/// Acquire the metadata for a file.</span>
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">stat</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">path</span>: <span class="kw">impl</span> <span class="ident">AsRef</span><span class="op">&lt;</span><span class="ident">Path</span><span class="op">&gt;</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">FileAttr</span><span class="op">&gt;</span> {
-        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path</span>.<span class="ident">as_ref</span>();
+        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path_to_bytes</span>(<span class="ident">path</span>.<span class="ident">as_ref</span>())<span class="question-mark">?</span>;
         <span class="kw">unsafe</span> {
             <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">stbuf</span> <span class="op">=</span> <span class="ident">mem</span>::<span class="ident">MaybeUninit</span>::<span class="ident">zeroed</span>();
             <span class="ident">poll_fn</span>(<span class="op">|</span><span class="ident">cx</span><span class="op">|</span> {
                 <span class="self">self</span>.<span class="ident">poll_stat</span>(
                     <span class="ident">cx</span>, <span class="comment">//</span>
-                    <span class="ident">path</span>,
+                    <span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">path</span>,
                     <span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_STAT</span>,
                     <span class="ident">stbuf</span>.<span class="ident">as_mut_ptr</span>(),
                 )
@@ -760,13 +771,13 @@
 
     <span class="doccomment">/// Acquire the metadata for a file.</span>
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">lstat</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">path</span>: <span class="kw">impl</span> <span class="ident">AsRef</span><span class="op">&lt;</span><span class="ident">Path</span><span class="op">&gt;</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">FileAttr</span><span class="op">&gt;</span> {
-        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path</span>.<span class="ident">as_ref</span>();
+        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path_to_bytes</span>(<span class="ident">path</span>.<span class="ident">as_ref</span>())<span class="question-mark">?</span>;
         <span class="kw">unsafe</span> {
             <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">stbuf</span> <span class="op">=</span> <span class="ident">mem</span>::<span class="ident">MaybeUninit</span>::<span class="ident">zeroed</span>();
             <span class="ident">poll_fn</span>(<span class="op">|</span><span class="ident">cx</span><span class="op">|</span> {
                 <span class="self">self</span>.<span class="ident">poll_stat</span>(
                     <span class="ident">cx</span>, <span class="comment">//</span>
-                    <span class="ident">path</span>,
+                    <span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">path</span>,
                     <span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_LSTAT</span>,
                     <span class="ident">stbuf</span>.<span class="ident">as_mut_ptr</span>(),
                 )
@@ -777,12 +788,12 @@
     }
 
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">setstat</span>(<span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">path</span>: <span class="kw">impl</span> <span class="ident">AsRef</span><span class="op">&lt;</span><span class="ident">Path</span><span class="op">&gt;</span>, <span class="ident">attrs</span>: <span class="ident">FileAttr</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span>()<span class="op">&gt;</span> {
-        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path</span>.<span class="ident">as_ref</span>();
+        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path_to_bytes</span>(<span class="ident">path</span>.<span class="ident">as_ref</span>())<span class="question-mark">?</span>;
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">attrs</span> <span class="op">=</span> <span class="ident">attrs</span>;
         <span class="ident">poll_fn</span>(<span class="op">|</span><span class="ident">cx</span><span class="op">|</span> {
             <span class="self">self</span>.<span class="ident">poll_stat</span>(
                 <span class="ident">cx</span>, <span class="comment">//</span>
-                <span class="ident">path</span>,
+                <span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">path</span>,
                 <span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_SETSTAT</span>,
                 <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">attrs</span>.<span class="number">0</span>,
             )
@@ -794,12 +805,11 @@
     <span class="kw">fn</span> <span class="ident">poll_open</span>(
         <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>,
         <span class="ident">cx</span>: <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="ident">task</span>::<span class="ident">Context</span><span class="op">&lt;</span><span class="lifetime">&#39;_</span><span class="op">&gt;</span>,
-        <span class="ident">path</span>: <span class="kw-2">&amp;</span><span class="ident">Path</span>,
+        <span class="ident">path</span>: <span class="kw-2">&amp;</span>[<span class="ident">u8</span>],
         <span class="ident">options</span>: <span class="kw-2">&amp;</span><span class="ident">OpenOptions</span>,
         <span class="ident">open_type</span>: <span class="ident">libc</span>::<span class="ident">c_int</span>,
     ) <span class="op">-</span><span class="op">&gt;</span> <span class="ident">Poll</span><span class="op">&lt;</span><span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">NonNull</span><span class="op">&lt;</span><span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_HANDLE</span><span class="op">&gt;</span><span class="op">&gt;</span><span class="op">&gt;</span> {
         <span class="kw">let</span> <span class="ident">sftp</span> <span class="op">=</span> <span class="kw-2">&amp;</span><span class="kw-2">mut</span> <span class="self">self</span>.<span class="ident">raw</span>;
-        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path</span>.<span class="ident">as_os_str</span>().<span class="ident">as_bytes</span>();
         <span class="kw">let</span> <span class="ident">flags</span> <span class="op">=</span> <span class="ident">options</span>.<span class="ident">flags</span>;
         <span class="kw">let</span> <span class="ident">mode</span> <span class="op">=</span> <span class="ident">options</span>.<span class="ident">mode</span>;
         <span class="self">self</span>.<span class="ident">sess</span>.<span class="ident">poll_with</span>(<span class="ident">cx</span>, <span class="op">|</span><span class="ident">sess</span><span class="op">|</span> {
@@ -807,7 +817,7 @@
                 <span class="ident">sys</span>::<span class="ident">libssh2_sftp_open_ex</span>(
                     <span class="ident">sftp</span>.<span class="ident">as_mut</span>(),
                     <span class="ident">path</span>.<span class="ident">as_ptr</span>() <span class="kw">as</span> <span class="kw-2">*</span><span class="kw">const</span> <span class="ident">libc</span>::<span class="ident">c_char</span>,
-                    <span class="ident">path</span>.<span class="ident">as_ref</span>().<span class="ident">len</span>() <span class="kw">as</span> <span class="ident">libc</span>::<span class="ident">c_uint</span>,
+                    <span class="ident">path</span>.<span class="ident">len</span>() <span class="kw">as</span> <span class="ident">libc</span>::<span class="ident">c_uint</span>,
                     <span class="ident">flags</span>,
                     <span class="ident">mode</span>,
                     <span class="ident">open_type</span>,
@@ -825,11 +835,11 @@
     }
 
     <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">opendir</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span><span class="op">&gt;</span>(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="kw-2">mut</span> <span class="self">self</span>, <span class="ident">path</span>: <span class="kw">impl</span> <span class="ident">AsRef</span><span class="op">&lt;</span><span class="ident">Path</span><span class="op">&gt;</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="ident">Dir</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="lifetime">&#39;sess</span><span class="op">&gt;</span><span class="op">&gt;</span> {
-        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path</span>.<span class="ident">as_ref</span>();
+        <span class="kw">let</span> <span class="ident">path</span> <span class="op">=</span> <span class="ident">path_to_bytes</span>(<span class="ident">path</span>.<span class="ident">as_ref</span>())<span class="question-mark">?</span>;
         <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">options</span> <span class="op">=</span> <span class="ident">OpenOptions</span>::<span class="ident">new</span>();
         <span class="ident">options</span>.<span class="ident">read</span>(<span class="bool-val">true</span>);
         <span class="kw">let</span> <span class="ident">raw</span> <span class="op">=</span>
-            <span class="ident">poll_fn</span>(<span class="op">|</span><span class="ident">cx</span><span class="op">|</span> <span class="self">self</span>.<span class="ident">poll_open</span>(<span class="ident">cx</span>, <span class="ident">path</span>, <span class="kw-2">&amp;</span><span class="ident">options</span>, <span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_OPENDIR</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="ident">poll_fn</span>(<span class="op">|</span><span class="ident">cx</span><span class="op">|</span> <span class="self">self</span>.<span class="ident">poll_open</span>(<span class="ident">cx</span>, <span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">path</span>, <span class="kw-2">&amp;</span><span class="ident">options</span>, <span class="ident">sys</span>::<span class="ident">LIBSSH2_SFTP_OPENDIR</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="ident">Dir</span>(<span class="ident">Handle</span> { <span class="ident">raw</span>, <span class="ident">sftp</span>: <span class="self">self</span> }))
     }
 }
@@ -1052,7 +1062,7 @@
         };
 
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="ident">DirEntry</span> {
-            <span class="ident">path</span>: <span class="ident">PathBuf</span>::<span class="ident">from</span>(<span class="ident">OsStr</span>::<span class="ident">from_bytes</span>(<span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">path</span>)),
+            <span class="ident">path</span>: <span class="ident">bytes_to_path</span>(<span class="ident">path</span>)<span class="question-mark">?</span>,
             <span class="ident">attr</span>: <span class="ident">FileAttr</span>(<span class="kw">unsafe</span> { <span class="ident">attr</span>.<span class="ident">assume_init</span>() }),
         }))
     }
