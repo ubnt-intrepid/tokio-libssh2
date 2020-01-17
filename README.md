@@ -36,6 +36,11 @@ The goal of this project is to provide a non-blocking `libssh2` bindings library
 **WARNING:**
 This project is currently under active development and cannot be used for producution use.
 
+## Disclaimer
+
+This is my personal project and is developed independent to [`ssh2-rs`](https://github.com/alexcrichton/ssh2-rs).
+When `ssh2-rs` itself supports asynchronous I/O, this project may end the development.
+
 ## License
 
 This library is licensed under either of
